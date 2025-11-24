@@ -367,57 +367,123 @@ class ElkjopScraper {
       try {
         this.logger.info(`Scraping product page`, { url });
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: this.config.timeout });
-        await page.waitForTimeout(1000);
+        await page.waitForTimeout(2000);
 
-        // Extract product data
-        const productData = await page.evaluate(() => {
-          const data: Partial<ProductData> = {};
+        // Take screenshot for debugging
+        const screenshotPath = path.join(process.cwd(), 'logs', `screenshot-${Date.now()}.png`);
+        await page.screenshot({ path: screenshotPath, fullPage: false });
+        this.logger.info(`Screenshot saved`, { path: screenshotPath });
 
-          // Product name
-          const nameEl = document.querySelector('h1[class*="product-title"], h1[data-testid="product-title"]');
-          data.name = nameEl?.textContent?.trim() || '';
+        // Extract HTML content for parsing
+        const htmlContent = await page.content();
 
-          // Price
-          const priceEl = document.querySelector('[class*="price"], [data-testid="product-price"]');
-          const priceText = priceEl?.textContent?.trim() || null;
+        // Save HTML for debugging
+        const htmlPath = path.join(process.cwd(), 'logs', `page-${Date.now()}.html`);
+        fs.writeFileSync(htmlPath, htmlContent, 'utf8');
+        this.logger.info(`HTML saved`, { path: htmlPath });
 
-          // Brand
-          const brandEl = document.querySelector('[class*="brand"], [data-testid="product-brand"], [itemprop="brand"]');
-          data.brand = brandEl?.textContent?.trim() || null;
-
-          // Image
-          const imgEl = document.querySelector('img[class*="product-image"], img[data-testid="product-image"]') as HTMLImageElement;
-          data.image_url = imgEl?.src || imgEl?.dataset?.src || null;
-
-          // Stock status
-          const stockEl = document.querySelector('[class*="stock"], [data-testid="stock-status"]');
-          data.stock_status = stockEl?.textContent?.trim() || 'unknown';
-
-          // EAN from meta tags or structured data
-          let ean: string | null = null;
-          const metaEan = document.querySelector('meta[itemprop="gtin13"], meta[property="product:ean"]');
-          if (metaEan) {
-            ean = metaEan.getAttribute('content');
-          }
-
-          // Try JSON-LD structured data
-          if (!ean) {
-            const scripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
-            for (const script of scripts) {
-              try {
-                const json = JSON.parse(script.textContent || '');
-                if (json.gtin13 || json.gtin) {
-                  ean = json.gtin13 || json.gtin;
-                  break;
-                }
-              } catch {}
+        // Helper to try multiple selectors
+        const trySelector = async (selectors: string[]): Promise<string | null> => {
+          for (const selector of selectors) {
+            try {
+              const element = await page.locator(selector).first();
+              const text = await element.textContent({ timeout: 1000 });
+              if (text) return text.trim();
+            } catch {
+              continue;
             }
           }
+          return null;
+        };
 
-          data.ean = ean;
+        // Extract product name
+        const nameSelectors = [
+          'h1[class*="ProductTitle"]',
+          'h1[class*="product-title"]',
+          'h1',
+        ];
+        const name = await trySelector(nameSelectors);
 
-          return { ...data, priceText };
-        });
+        // Extract price - Elk uses data-primary-price attribute
+        let priceText: string | null = null;
+        try {
+          const priceEl = await page.locator('[data-primary-price]').first();
+          priceText = await priceEl.getAttribute('data-primary-price');
+        } catch {}
+
+        // Fallback to text selectors
+        if (!priceText) {
+          const priceSelectors = [
+            '[class*="ProductPrice"]',
+            '[class*="price-value"]',
+            '[itemprop="price"]',
+            '.price',
+          ];
+          priceText = await trySelector(priceSelectors);
+        }
+
+        // Extract brand
+        const brandSelectors = [
+          '[class*="ProductBrand"]',
+          '[class*="brand"]',
+          'a[href*="/brand/"]',
+        ];
+        const brand = await trySelector(brandSelectors);
+
+        // Extract image
+        let image_url: string | null = null;
+        try {
+          const imgEl = await page.locator('img[class*="Product"], img[alt], img').first();
+          image_url = await imgEl.getAttribute('src');
+        } catch {}
+
+        // Extract stock status
+        const stockSelectors = [
+          '[class*="Stock"]',
+          '[class*="availability"]',
+        ];
+        const stockText = (await trySelector(stockSelectors))?.toLowerCase() || '';
+        let stock_status = 'unknown';
+        if (stockText.includes('på lager') || stockText.includes('tilgjengelig')) {
+          stock_status = 'in_stock';
+        } else if (stockText.includes('ikke på lager') || stockText.includes('utsolgt')) {
+          stock_status = 'out_of_stock';
+        }
+
+        // Try to extract EAN and other data from JSON-LD
+        let ean: string | null = null;
+        const jsonLdScripts = await page.locator('script[type="application/ld+json"]').all();
+        for (const script of jsonLdScripts) {
+          try {
+            const content = await script.textContent();
+            if (!content) continue;
+            const json = JSON.parse(content);
+            if (json['@type'] === 'Product' || json.product) {
+              const productData = json['@type'] === 'Product' ? json : json.product;
+              if (productData.gtin13 || productData.gtin) {
+                ean = productData.gtin13 || productData.gtin;
+                break;
+              }
+            }
+          } catch {}
+        }
+
+        // Try meta tags for EAN
+        if (!ean) {
+          try {
+            const metaEan = await page.locator('meta[itemprop="gtin13"], meta[property="product:ean"]').first();
+            ean = await metaEan.getAttribute('content');
+          } catch {}
+        }
+
+        const productData = {
+          name,
+          brand,
+          image_url,
+          stock_status,
+          ean,
+          priceText,
+        };
 
         if (!productData.name) {
           throw new Error('Could not extract product name');
@@ -517,14 +583,52 @@ class ElkjopScraper {
   async saveToSupabase(products: ProductData[]): Promise<void> {
     this.logger.info(`Saving products to Supabase`, { count: products.length });
 
+    // Get Elkjøp retailer ID
+    const { data: retailer, error: retailerError } = await this.supabase
+      .from('retailers')
+      .select('id')
+      .eq('slug', 'elkjop')
+      .single();
+
+    if (retailerError || !retailer) {
+      this.logger.error('Elkjøp retailer not found in database');
+      throw new Error('Elkjøp retailer not found in database. Please run database migrations.');
+    }
+
+    const retailerId = retailer.id;
+
     for (const product of products) {
       try {
-        // Insert or update product
-        const { data: existingProduct, error: selectError } = await this.supabase
-          .from('products')
-          .select('id')
-          .eq('product_url', product.product_url)
-          .single();
+        // Generate slug from product name
+        const slug = product.name
+          .toLowerCase()
+          .replace(/[æ]/g, 'ae')
+          .replace(/[ø]/g, 'o')
+          .replace(/[å]/g, 'a')
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '');
+
+        // Check if product exists by EAN or name+brand
+        let existingProduct;
+        if (product.ean) {
+          const { data } = await this.supabase
+            .from('products')
+            .select('id')
+            .eq('ean', product.ean)
+            .single();
+          existingProduct = data;
+        }
+
+        // If not found by EAN, try name + brand
+        if (!existingProduct && product.brand) {
+          const { data } = await this.supabase
+            .from('products')
+            .select('id')
+            .eq('name', product.name)
+            .eq('brand', product.brand)
+            .single();
+          existingProduct = data;
+        }
 
         let productId: string;
 
@@ -537,8 +641,6 @@ class ElkjopScraper {
               ean: product.ean,
               brand: product.brand,
               image_url: product.image_url,
-              stock_status: product.stock_status,
-              retailer: product.retailer,
               updated_at: new Date().toISOString(),
             })
             .eq('id', existingProduct.id)
@@ -546,7 +648,7 @@ class ElkjopScraper {
             .single();
 
           if (error) throw error;
-          productId = data.id;
+          productId = data!.id;
           this.logger.info(`Updated product in database`, { name: product.name, id: productId });
         } else {
           // Insert new product
@@ -554,28 +656,68 @@ class ElkjopScraper {
             .from('products')
             .insert({
               name: product.name,
+              slug: slug,
               ean: product.ean,
               brand: product.brand,
               image_url: product.image_url,
-              product_url: product.product_url,
-              stock_status: product.stock_status,
-              retailer: product.retailer,
             })
             .select('id')
             .single();
 
           if (error) throw error;
-          productId = data.id;
+          productId = data!.id;
           this.logger.success(`Inserted new product to database`, { name: product.name, id: productId });
+        }
+
+        // Check if product_retailer junction exists
+        const { data: existingJunction } = await this.supabase
+          .from('product_retailers')
+          .select('id')
+          .eq('product_id', productId)
+          .eq('retailer_id', retailerId)
+          .single();
+
+        let productRetailerId: string;
+
+        if (existingJunction) {
+          // Update existing junction
+          const { data, error } = await this.supabase
+            .from('product_retailers')
+            .update({
+              product_url: product.product_url,
+              stock_status: product.stock_status,
+            })
+            .eq('id', existingJunction.id)
+            .select('id')
+            .single();
+
+          if (error) throw error;
+          productRetailerId = data!.id;
+        } else {
+          // Create junction
+          const { data, error } = await this.supabase
+            .from('product_retailers')
+            .insert({
+              product_id: productId,
+              retailer_id: retailerId,
+              product_url: product.product_url,
+              stock_status: product.stock_status,
+            })
+            .select('id')
+            .single();
+
+          if (error) throw error;
+          productRetailerId = data!.id;
+          this.logger.info(`Created product-retailer junction`, { productId, retailerId });
         }
 
         // Insert price record
         const { error: priceError } = await this.supabase
           .from('prices')
           .insert({
-            product_id: productId,
+            product_retailer_id: productRetailerId,
             price: product.price,
-            shipping_cost: product.shipping_cost,
+            shipping_cost: product.shipping_cost || 0,
             scraped_at: product.scraped_at.toISOString(),
           });
 
