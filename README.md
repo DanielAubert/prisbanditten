@@ -1,36 +1,193 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# PrisBanditt 🏷️
 
-## Getting Started
+En moderne norsk prissammenligningsplattform bygget for å gi deg de beste tilbudene på elektronikk. PrisBanditt samler priser fra flere norske nettbutikker og gir deg full oversikt over prishistorikk, trender og besparelser.
 
-First, run the development server:
+## ✨ Funksjoner
+
+- **⚡ Instant Søk**: Lynrask søkefunksjon med Typesense (<50ms responstid)
+- **📊 Prishistorikk**: Interaktive grafer som viser prisutviklingen over tid
+- **🔍 Sammenlign Priser**: Få oversikt over priser fra flere butikker på ett sted
+- **💰 Spar Penger**: Se hvor mye du kan spare ved å velge riktig butikk
+- **📱 Responsivt Design**: Fungerer perfekt på både desktop og mobil
+- **🎯 Kategoribasert Browsing**: Enkelt å finne produkter innen ulike kategorier
+- **🔄 Automatisk Prissporing**: Regelmessig oppdatering av produktpriser
+
+## 🛠️ Teknologi Stack
+
+- **Framework**: [Next.js 16](https://nextjs.org/) med App Router
+- **Språk**: TypeScript
+- **Database**: [Supabase](https://supabase.com/) (PostgreSQL)
+- **Søk**: [Typesense Cloud](https://cloud.typesense.org/)
+- **Styling**: Tailwind CSS + Shadcn/UI
+- **Grafer**: Recharts
+- **Web Scraping**: Playwright + Crawlee
+- **Deployment**: Vercel (anbefalt)
+
+## 📋 Forutsetninger
+
+- Node.js 16+ og npm
+- Supabase-konto (gratis tier tilgjengelig)
+- Typesense Cloud-konto (gratis tier tilgjengelig)
+
+## 🚀 Kom i gang
+
+### 1. Klon repositoriet
+
+```bash
+git clone https://github.com/DanielAubert/prisbanditten.git
+cd prisbanditten
+```
+
+### 2. Installer avhengigheter
+
+```bash
+npm install
+```
+
+### 3. Sett opp miljøvariabler
+
+Opprett en `.env.local` fil i rotmappen:
+
+```env
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=din-supabase-url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=din-supabase-anon-key
+SUPABASE_SERVICE_ROLE_KEY=din-service-role-key
+
+# Typesense Cloud
+NEXT_PUBLIC_TYPESENSE_HOST=din-typesense-host
+NEXT_PUBLIC_TYPESENSE_PORT=443
+NEXT_PUBLIC_TYPESENSE_PROTOCOL=https
+NEXT_PUBLIC_TYPESENSE_API_KEY=din-typesense-api-key
+TYPESENSE_ADMIN_API_KEY=din-typesense-admin-key
+
+# Contact Email (for web scraping user-agent)
+CONTACT_EMAIL=din@epost.no
+```
+
+### 4. Sett opp databasen
+
+Kjør SQL-migreringen i Supabase SQL Editor:
+1. Gå til din Supabase dashboard
+2. Åpne SQL Editor
+3. Kopier innholdet fra `supabase/migrations/001_initial_schema.sql`
+4. Kjør migreringen
+
+### 5. Sett opp Typesense
+
+```bash
+# Opprett søkeindeks
+npx dotenv-cli -e .env.local -- npx tsx scripts/setup-typesense.ts
+
+# Seed med testdata (valgfritt)
+npx dotenv-cli -e .env.local -- npx tsx scripts/seed-mock-data.ts
+```
+
+### 6. Start utviklingsserveren
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Åpne [http://localhost:3000](http://localhost:3000) i nettleseren.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 📁 Prosjektstruktur
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```
+prisbanditt/
+├── src/
+│   ├── app/                    # Next.js app router
+│   │   ├── page.tsx           # Forside
+│   │   ├── sok/               # Søkeside
+│   │   └── produkt/[slug]/    # Produktdetaljer
+│   ├── components/            # React-komponenter
+│   │   ├── layout/           # Header, Footer
+│   │   ├── products/         # ProductCard, PriceHistoryChart
+│   │   ├── search/           # SearchBar, SearchFilters
+│   │   └── ui/               # Shadcn UI komponenter
+│   └── lib/                  # Utilities og integrasjoner
+│       ├── supabase.ts       # Supabase client
+│       ├── typesense.ts      # Typesense client
+│       ├── utils.ts          # Hjelpefunksjoner
+│       └── scrapers/         # Web scraping scripts
+├── scripts/                  # Setup og seeding scripts
+├── supabase/                # Database migreringer
+└── package.json
+```
 
-## Learn More
+## 🔧 Tilgjengelige Scripts
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+# Utvikling
+npm run dev              # Start utviklingsserver
+npm run build           # Bygg for produksjon
+npm run start           # Start produksjonsserver
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+# Database & Søk
+npx dotenv-cli -e .env.local -- npx tsx scripts/setup-typesense.ts
+npx dotenv-cli -e .env.local -- npx tsx scripts/seed-mock-data.ts
+npx dotenv-cli -e .env.local -- npx tsx scripts/debug-product.ts
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 🎯 Datamodell
 
-## Deploy on Vercel
+### Hovedtabeller
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- **products**: Produktinformasjon (navn, EAN, beskrivelse, bilder)
+- **retailers**: Butikkinformasjon (Elkjøp, Komplett, Power, etc.)
+- **product_retailers**: Kobling mellom produkter og butikker
+- **prices**: Prishistorikk med tidsstempler
+- **categories**: Produktkategorier
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### View
+
+- **products_with_prices**: Aggregert view med laveste/høyeste/gjennomsnittspris
+
+## 🌐 API Integrasjoner
+
+### Supabase
+Brukes for å lagre all produktdata, butikkinformasjon og prishistorikk. Row Level Security (RLS) sikrer at data kun kan leses, ikke skrives, fra klientsiden.
+
+### Typesense
+Gir lynrask instant-søk med fuzzy matching, typo-toleranse og facetert filtrering.
+
+## 🤝 Bidra
+
+Bidrag er velkomne! Vennligst:
+
+1. Fork repositoriet
+2. Opprett en feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit endringene dine (`git commit -m 'Add some AmazingFeature'`)
+4. Push til branchen (`git push origin feature/AmazingFeature`)
+5. Åpne en Pull Request
+
+## ⚖️ Juridisk & Web Scraping
+
+Dette prosjektet bruker etisk web scraping i tråd med robots.txt og terms of service. Vi:
+
+- Respekterer robots.txt direktiver
+- Bruker rate limiting for å ikke overbelaste servere
+- Identifiserer oss med kontakt-informasjon i user-agent
+- Lagrer kun offentlig tilgjengelig prisinformasjon
+- Lenker alltid tilbake til originalkilde
+
+## 📝 Lisens
+
+Dette prosjektet er lisensiert under MIT License.
+
+## 🙏 Takk til
+
+- [Prisjakt](https://prisjakt.no) for inspirasjon
+- [Next.js](https://nextjs.org/) teamet
+- [Supabase](https://supabase.com/) og [Typesense](https://typesense.org/)
+- Alle open source contributors
+
+## 📞 Kontakt
+
+Daniel Aubert - [@DanielAubert](https://github.com/DanielAubert)
+
+Prosjekt Link: [https://github.com/DanielAubert/prisbanditten](https://github.com/DanielAubert/prisbanditten)
+
+---
+
+Bygget med ❤️ og ☕ i Norge
